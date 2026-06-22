@@ -1,5 +1,6 @@
 'use client'
 import { useEffect, useState } from 'react'
+import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
 
 const HARDCODED_REWARDS = {
@@ -46,10 +47,12 @@ const SECTION_TITLE: Record<string, string> = {
 }
 
 export default function RewardsPage() {
-  const [claims, setClaims]         = useState<any[]>([])
+  const router = useRouter()
+  const [claims, setClaims]               = useState<any[]>([])
   const [customRewards, setCustomRewards] = useState<any[]>([])
-  const [loading, setLoading]       = useState(true)
-  const [claiming, setClaiming]     = useState<string | null>(null)
+  const [loading, setLoading]             = useState(true)
+  const [claiming, setClaiming]           = useState<string | null>(null)
+  const [missionsComplete, setMissionsComplete] = useState(false)
 
   useEffect(() => {
     fetchAll()
@@ -84,6 +87,20 @@ export default function RewardsPage() {
 
     setClaims(claimsData || [])
     setCustomRewards(rewardsData || [])
+
+    // Check if all missions done today
+    const today = new Date().toISOString().split('T')[0]
+    const { data: todayTasks } = await supabase
+      .from('daily_tasks')
+      .select('completed')
+      .eq('athlete_id', user.id)
+      .eq('date', today)
+
+    const allDone = todayTasks &&
+      todayTasks.length === 5 &&
+      todayTasks.every(t => t.completed)
+
+    setMissionsComplete(allDone || false)
     setLoading(false)
   }
 
@@ -135,7 +152,6 @@ export default function RewardsPage() {
     { type: 'milestone', rewards: HARDCODED_REWARDS.milestone },
   ]
 
-  // Add custom rewards as their own section if any exist
   if (customRewards.length > 0) {
     allSections.push({
       type: 'custom',
@@ -154,73 +170,105 @@ export default function RewardsPage() {
       </div>
 
       <div className="px-5 pt-6 flex flex-col gap-8">
-        {allSections.map(({ type, rewards }) => (
-          <section key={type}>
-            <div className="text-[10px] text-white/30 tracking-widest mb-3">
-              {SECTION_TITLE[type]}
+
+        {/* Locked State */}
+        {!missionsComplete && (
+          <div className="flex flex-col items-center justify-center px-6 py-20 text-center">
+            <div className="text-6xl mb-4">🔒</div>
+            <div className="text-xl font-black text-white mb-2">Rewards Locked</div>
+            <div className="text-white/40 text-sm leading-relaxed">
+              Complete all 5 daily missions to unlock your reward chest for today.
             </div>
-
-            <div className="flex flex-col gap-3">
-              {rewards.map((reward) => {
-                const status     = getStatus(reward.name)
-                const isClaiming = claiming === reward.name
-
-                return (
-                  <div key={reward.name}
-                    className="flex items-center justify-between bg-[#111] border border-white/5 rounded-2xl px-4 py-4">
-                    <div className="flex items-center gap-3">
-                      <span className="text-2xl">{reward.emoji}</span>
-                      <div>
-                        <div className="text-sm font-bold">{reward.name}</div>
-                        {'unlock' in reward && reward.unlock && (
-                          <div className="text-[10px] text-white/30 mt-0.5">🔓 {reward.unlock}</div>
-                        )}
-                      </div>
-                    </div>
-
-                    {status ? (
-                      <span className={`text-[10px] font-bold px-3 py-1 rounded-full ${STATUS_STYLE[status]}`}>
-                        {STATUS_LABEL[status]}
-                      </span>
-                    ) : (
-                      <button
-                        onClick={() => handleClaim(reward.name, type)}
-                        disabled={isClaiming}
-                        className="bg-rose-500 hover:bg-rose-400 disabled:opacity-40 text-white text-xs font-bold px-4 py-2 rounded-xl transition-all">
-                        {isClaiming ? '...' : 'Claim'}
-                      </button>
-                    )}
-                  </div>
-                )
-              })}
-            </div>
-          </section>
-        ))}
-
-        {/* Claim History */}
-        {claims.length > 0 && (
-          <section>
-            <div className="text-[10px] text-white/30 tracking-widest mb-3">📜 CLAIM HISTORY</div>
-            <div className="flex flex-col gap-2">
-              {claims.map(claim => (
-                <div key={claim.id}
-                  className="flex justify-between items-center bg-[#111] border border-white/5 rounded-xl px-4 py-3">
-                  <div>
-                    <div className="text-sm font-medium">{claim.reward_name}</div>
-                    <div className="text-[10px] text-white/30 mt-0.5">
-                      {new Date(claim.claimed_date).toLocaleDateString('en-IN', {
-                        day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit'
-                      })}
-                    </div>
-                  </div>
-                  <span className={`text-[10px] font-bold px-3 py-1 rounded-full ${STATUS_STYLE[claim.status]}`}>
-                    {STATUS_LABEL[claim.status]}
-                  </span>
+            <div className="mt-6 bg-[#111] border border-white/5 rounded-2xl px-6 py-4 w-full max-w-xs">
+              <div className="text-[10px] text-white/30 tracking-widest mb-3">TODAY'S MISSIONS</div>
+              {['workout', 'protein', 'water', 'mobility', 'sleep'].map(m => (
+                <div key={m} className="flex items-center gap-2 py-1">
+                  <div className="w-2 h-2 rounded-full bg-white/10" />
+                  <span className="text-xs text-white/30 capitalize">{m}</span>
                 </div>
               ))}
             </div>
-          </section>
+            <button
+              onClick={() => router.push('/dashboard')}
+              className="mt-6 bg-orange-500 text-white font-bold px-6 py-3 rounded-xl text-sm">
+              Go Complete Missions →
+            </button>
+          </div>
         )}
+
+        {/* Unlocked — show rewards */}
+        {missionsComplete && (
+          <>
+            {allSections.map(({ type, rewards }) => (
+              <section key={type}>
+                <div className="text-[10px] text-white/30 tracking-widest mb-3">
+                  {SECTION_TITLE[type]}
+                </div>
+
+                <div className="flex flex-col gap-3">
+                  {rewards.map((reward) => {
+                    const status     = getStatus(reward.name)
+                    const isClaiming = claiming === reward.name
+
+                    return (
+                      <div key={reward.name}
+                        className="flex items-center justify-between bg-[#111] border border-white/5 rounded-2xl px-4 py-4">
+                        <div className="flex items-center gap-3">
+                          <span className="text-2xl">{reward.emoji}</span>
+                          <div>
+                            <div className="text-sm font-bold">{reward.name}</div>
+                            {'unlock' in reward && reward.unlock && (
+                              <div className="text-[10px] text-white/30 mt-0.5">🔓 {reward.unlock}</div>
+                            )}
+                          </div>
+                        </div>
+
+                        {status ? (
+                          <span className={`text-[10px] font-bold px-3 py-1 rounded-full ${STATUS_STYLE[status]}`}>
+                            {STATUS_LABEL[status]}
+                          </span>
+                        ) : (
+                          <button
+                            onClick={() => handleClaim(reward.name, type)}
+                            disabled={isClaiming}
+                            className="bg-rose-500 hover:bg-rose-400 disabled:opacity-40 text-white text-xs font-bold px-4 py-2 rounded-xl transition-all">
+                            {isClaiming ? '...' : 'Claim'}
+                          </button>
+                        )}
+                      </div>
+                    )
+                  })}
+                </div>
+              </section>
+            ))}
+
+            {/* Claim History */}
+            {claims.length > 0 && (
+              <section>
+                <div className="text-[10px] text-white/30 tracking-widest mb-3">📜 CLAIM HISTORY</div>
+                <div className="flex flex-col gap-2">
+                  {claims.map(claim => (
+                    <div key={claim.id}
+                      className="flex justify-between items-center bg-[#111] border border-white/5 rounded-xl px-4 py-3">
+                      <div>
+                        <div className="text-sm font-medium">{claim.reward_name}</div>
+                        <div className="text-[10px] text-white/30 mt-0.5">
+                          {new Date(claim.claimed_date).toLocaleDateString('en-IN', {
+                            day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit'
+                          })}
+                        </div>
+                      </div>
+                      <span className={`text-[10px] font-bold px-3 py-1 rounded-full ${STATUS_STYLE[claim.status]}`}>
+                        {STATUS_LABEL[claim.status]}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </section>
+            )}
+          </>
+        )}
+
       </div>
     </main>
   )
