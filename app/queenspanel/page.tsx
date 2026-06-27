@@ -64,19 +64,12 @@ export default function QueensPanelPage() {
   }, []);
 
   const loadData = async () => {
-    const { data: athletes } = await supabase
-      .from("profiles")
-      .select("*")
-      .eq("role", "athlete")
-      .limit(1);
-
-    if (!athletes || athletes.length === 0) {
-      setLoading(false);
-      return;
-    }
-    const athlete = athletes[0];
-    setAthleteId(athlete.id);
-    setAthleteName(athlete.name || "Vedh");
+    const athlete = {
+      id: "a1f1760c-7941-47b8-bec5-a0ce9daa1b33",
+      name: "Vedh",
+    };
+    setAthleteId("a1f1760c-7941-47b8-bec5-a0ce9daa1b33");
+    setAthleteName("Vedh");
 
     const today = new Date().toISOString().split("T")[0];
     const { data: todayTasks } = await supabase
