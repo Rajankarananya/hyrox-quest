@@ -5,11 +5,11 @@ import { useRouter } from "next/navigation";
 import BottomNav from "../components/BottomNav";
 
 const TASKS = [
-  { key: "workout", label: "Complete Workout", emoji: "🏋️", xp: 50 },
-  { key: "protein", label: "Hit Protein Goal", emoji: "🥩", xp: 20 },
-  { key: "water",   label: "Drink 4L Water",   emoji: "💧", xp: 20 },
-  { key: "mobility",label: "Mobility Session",  emoji: "🧘", xp: 10 },
-  { key: "sleep",   label: "Sleep On Time",     emoji: "😴", xp: 30 },
+  { key: "workout",  label: "Complete Workout", emoji: "🏋️", xp: 50 },
+  { key: "protein",  label: "Hit Protein Goal",  emoji: "🥩", xp: 20 },
+  { key: "water",    label: "Drink 4L Water",    emoji: "💧", xp: 20 },
+  { key: "mobility", label: "Mobility Session",  emoji: "🧘", xp: 10 },
+  { key: "sleep",    label: "Sleep On Time",     emoji: "😴", xp: 30 },
 ];
 
 const LEVELS = [
@@ -75,16 +75,17 @@ function Countdown() {
 
 export default function Dashboard() {
   const router = useRouter();
-  const [name, setName]   = useState("Vedh");
-  const [xp, setXp]       = useState(0);
-  const [streak, setStreak] = useState(0);
-  const [tasks, setTasks] = useState<Record<string, boolean>>({});
-  const [loading, setLoading] = useState(true);
-  const [allDone, setAllDone] = useState(false);
-  const [latestMessage, setLatestMessage] = useState<{ id: string; message: string } | null>(null)
+  const [name, setName]               = useState("Vedh");
+  const [xp, setXp]                   = useState(0);
+  const [streak, setStreak]           = useState(0);
+  const [streakAtRisk, setStreakAtRisk] = useState(false);
+  const [tasks, setTasks]             = useState<Record<string, boolean>>({});
+  const [loading, setLoading]         = useState(true);
+  const [allDone, setAllDone]         = useState(false);
+  const [latestMessage, setLatestMessage] = useState<{ id: string; message: string } | null>(null);
 
   useEffect(() => {
-    loadData()
+    loadData();
 
     const channel = supabase
       .channel('messages_realtime')
@@ -93,11 +94,11 @@ export default function Dashboard() {
         schema: 'public',
         table: 'messages',
       }, (payload) => {
-        setLatestMessage({ id: payload.new.id, message: payload.new.message })
+        setLatestMessage({ id: payload.new.id, message: payload.new.message });
       })
-      .subscribe()
+      .subscribe();
 
-    return () => { supabase.removeChannel(channel) }
+    return () => { supabase.removeChannel(channel); };
   }, []);
 
   useEffect(() => {
@@ -106,13 +107,10 @@ export default function Dashboard() {
   }, [tasks]);
 
   const dismissMessage = async () => {
-    if (!latestMessage) return
-    await supabase
-      .from('messages')
-      .update({ read: true })
-      .eq('id', latestMessage.id)
-    setLatestMessage(null)
-  }
+    if (!latestMessage) return;
+    await supabase.from('messages').update({ read: true }).eq('id', latestMessage.id);
+    setLatestMessage(null);
+  };
 
   const loadData = async () => {
     const { data: { user } } = await supabase.auth.getUser();
@@ -133,47 +131,82 @@ export default function Dashboard() {
       .from("daily_tasks").select("*")
       .eq("athlete_id", user.id).eq("date", today);
 
-    if (todayTasks && todayTasks.length > 0) {
+    // Deduplicate — take only first row per task_name
+    const seen = new Set<string>();
+    const uniqueTasks = (todayTasks || []).filter(t => {
+      if (seen.has(t.task_name)) return false;
+      seen.add(t.task_name);
+      return true;
+    });
+
+    if (uniqueTasks.length > 0) {
       const map: Record<string, boolean> = {};
-      todayTasks.forEach((t) => { map[t.task_name] = t.completed; });
+      uniqueTasks.forEach((t) => { map[t.task_name] = t.completed; });
       setTasks(map);
     } else {
       await seedTasks(user.id, today);
     }
 
+    // Fetch all tasks for streak calculation
     const { data: allTasks } = await supabase
       .from("daily_tasks").select("date, completed")
       .eq("athlete_id", user.id).order("date", { ascending: false });
 
     if (allTasks) {
+      // Build dayMap — true only if ALL tasks that day were completed
       const dayMap: Record<string, boolean> = {};
       allTasks.forEach((t) => {
-        if (!dayMap[t.date]) dayMap[t.date] = true;
+        if (!(t.date in dayMap)) dayMap[t.date] = true;
         if (!t.completed) dayMap[t.date] = false;
       });
+
+      // Streak with 1 grace day
       let count = 0;
+      let missedDays = 0;
       const d = new Date();
+
       for (let i = 0; i < 60; i++) {
         const key = d.toISOString().split("T")[0];
-        if (dayMap[key]) count++;
-        else if (i > 0) break;
+        const dayDone = dayMap[key];
+
+        if (dayDone === true) {
+          count++;
+          missedDays = 0;
+        } else {
+          if (i === 0) {
+            // today not done yet — don't penalize
+          } else {
+            missedDays++;
+            if (missedDays >= 2) break; // 2 consecutive misses = streak over
+          }
+        }
+
         d.setDate(d.getDate() - 1);
       }
+
+      // Check if yesterday was missed → streak at risk
+      const yesterday = new Date();
+      yesterday.setDate(yesterday.getDate() - 1);
+      const yesterdayKey = yesterday.toISOString().split("T")[0];
+      if (dayMap[yesterdayKey] === false || !(yesterdayKey in dayMap)) {
+        setStreakAtRisk(true);
+      } else {
+        setStreakAtRisk(false);
+      }
+
       setStreak(count);
     }
 
-    // Only fetch latest UNREAD message to show on dashboard
+    // Fetch latest unread message
     const { data: msgData } = await supabase
       .from('messages')
       .select('id, message')
       .eq('read', false)
       .order('created_at', { ascending: false })
       .limit(1)
-      .single()
+      .single();
 
-    if (msgData) {
-      setLatestMessage({ id: msgData.id, message: msgData.message })
-    }
+    if (msgData) setLatestMessage({ id: msgData.id, message: msgData.message });
 
     setLoading(false);
   };
@@ -239,7 +272,7 @@ export default function Dashboard() {
 
       <div className="px-5 pt-5 flex flex-col gap-4">
 
-        {/* Message from Ananya — stays until X tapped */}
+        {/* Message from Ananya */}
         {latestMessage && (
           <div className="bg-pink-500/10 border border-pink-500/20 rounded-2xl px-4 py-4 flex gap-3 items-start">
             <span className="text-xl">💌</span>
@@ -254,6 +287,21 @@ export default function Dashboard() {
               className="text-white/20 hover:text-white/60 text-lg leading-none transition-all mt-0.5">
               ✕
             </button>
+          </div>
+        )}
+
+        {/* Streak at risk warning */}
+        {streakAtRisk && streak > 0 && (
+          <div className="bg-yellow-500/10 border border-yellow-500/20 rounded-2xl px-4 py-3 flex gap-3 items-center">
+            <span className="text-xl">⚠️</span>
+            <div>
+              <div className="text-[10px] text-yellow-400 tracking-widest font-bold mb-0.5">
+                STREAK AT RISK
+              </div>
+              <div className="text-xs text-white/60">
+                You missed yesterday. Complete all missions today to save your streak!
+              </div>
+            </div>
           </div>
         )}
 
